@@ -777,7 +777,7 @@ button,.btn,[data-act]{touch-action:manipulation}
 'use strict';
 /* ---------------- tiny helpers ---------------- */
 var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'}[c]})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'"',"'":'&#39;'}[c]})}
 function uid(p){return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function p2(n){return n<10?'0'+n:''+n}
 function nowIso(){return new Date().toISOString()}
@@ -2007,7 +2007,7 @@ var sync=(function(){
       '<label class="fl full">Fine-grained token (Contents: read and write)<input class="fi" id="syncTok" type="password" data-input="sync-token" value="" placeholder="'+(tokSet?'Token saved on this device. Paste a new one to replace it.':'github_pat_…')+'" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label></div>'+
       '<p class="hint2">Data file: <b>'+esc(path())+'</b>. The token is stored only in this browser on this device. It is not in the app code, the repo, or Export JSON.</p>'+
       '<p class="note sync-line sl-'+S.status+'" id="syncLine" role="status">'+esc(lineText())+'</p>'+
-      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save & connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
+      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save &amp; connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
   }
 
   /* ----- lifecycle ----- */
