@@ -742,6 +742,28 @@ button,.btn,[data-act]{touch-action:manipulation}
 #syncPanel .fgrid{margin-top:2px}
 @media (max-width:700px){.syncchip{font-size:11px;padding:2px 8px 2px 7px}}
 
+
+/* ---- real-data preview additions ---- */
+.chip.unv{color:var(--amber-t);background:var(--amber-b);border:1px solid var(--amber-t);font-size:10px;font-weight:700;padding:0 7px;letter-spacing:.02em;line-height:16px}
+.chip.pri{font-size:10px;padding:0 7px;line-height:16px;letter-spacing:.04em;text-transform:uppercase}
+.chip.priv{color:var(--purple-t);background:var(--purple-b);font-size:10px;padding:0 7px;line-height:16px}
+.chip.priv svg{width:10px;height:10px}
+.wo{color:var(--amber-t);font-weight:700;font-size:11.5px}
+.wo.big{font-size:13px}
+.irow .nline{font-size:12px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.irow .rf{font-size:10.5px;color:var(--muted);opacity:.8}
+.irow>div{min-width:0}
+.irow .tags{margin-top:5px}
+.sgh{display:flex;align-items:center;gap:10px;margin:14px 0 6px 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.sgh .sg-t{color:var(--pc,var(--ink))}.sgh .sg-n{font-size:10.5px;letter-spacing:.02em;text-transform:none;font-weight:500}
+.sgh .sg-l{flex:1;height:1px;background:var(--line);opacity:.7}
+.dfacts{margin:10px 0 14px;border:1px solid var(--line);border-radius:12px;padding:6px 14px;background:var(--raised,transparent)}
+.dr{display:grid;grid-template-columns:86px 1fr;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.dr:last-child{border-bottom:0}
+.dk{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding-top:2px}
+.dv{min-width:0;overflow-wrap:anywhere}.dv .dn{line-height:1.45;color:var(--ink)}
+.dv .muted{color:var(--muted)}
+.row3 .s .wo{white-space:nowrap}
 </style>
 <style id="laneCss"></style>
 </head>
@@ -755,7 +777,7 @@ button,.btn,[data-act]{touch-action:manipulation}
 'use strict';
 /* ---------------- tiny helpers ---------------- */
 var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'}[c]})}
 function uid(p){return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function p2(n){return n<10?'0'+n:''+n}
 function nowIso(){return new Date().toISOString()}
@@ -978,7 +1000,7 @@ function normalize(s){
   var t=nowIso();
   ['lanes','items','bots','outbox','notes'].forEach(function(k){s[k].forEach(function(r,i){
     if(!r.id)r.id=uid(k.slice(0,2));r.owner=r.owner||'cosmo';r.visibility=r.visibility==='team'?'team':'personal';
-    r.created_at=r.created_at||t;r.updated_at=r.updated_at||r.created_at})});
+    r.created_at=r.created_at||t;r.updated_at=r.updated_at||r.created_at;if(r.private===true)r.visibility='personal'})});
   s.lanes.forEach(function(l,i){l.name=l.name||l.id;l.color=/^#[0-9a-f]{6}$/i.test(l.color||'')?l.color:'#8E948C';
     l.color_light=/^#[0-9a-f]{6}$/i.test(l.color_light||'')?l.color_light:l.color;
     if(SHAPE_NAMES.indexOf(l.shape)<0)l.shape='circle';
@@ -1014,7 +1036,7 @@ function botById(id){for(var i=0;i<state.bots.length;i++)if(state.bots[i].id===i
 function itemById(id){for(var i=0;i<state.items.length;i++)if(state.items[i].id===id)return state.items[i];return null}
 function isOpen(it){return CLOSED.indexOf(it.status)<0}
 function daysTo(it){return it.due?dayDiff(today(),it.due):null}
-function waitAge(it){return WAITING.indexOf(it.status)>=0?dayDiff(it.since||it.created_at.slice(0,10),today()):null}
+function waitAge(it){return WAITING.indexOf(it.status)>=0&&(it.since||!it.ref)?dayDiff(it.since||it.created_at.slice(0,10),today()):null}
 function laneRank(id){var i=state.priorities.lane_order.indexOf(id);return i<0?99:i}
 function rule(key){for(var i=0;i<state.priorities.rules.length;i++)if(state.priorities.rules[i].key===key)return state.priorities.rules[i];return null}
 function waitDays(){var r=rule('waiting');return r&&r.enabled?(r.days||7):7}
@@ -1035,17 +1057,20 @@ function tierOf(it){
   }
   return 99;
 }
+var PRI={high:0,med:1,low:2};
+function priOf(it){return it.priority in PRI?PRI[it.priority]:1}
 function cmpRank(a,b){
   var ta=tierOf(a),tb=tierOf(b);if(ta!==tb)return ta-tb;
-  var la=laneRank(a.lane),lb=laneRank(b.lane);if(la!==lb)return la-lb;
+  var pa=priOf(a),pb=priOf(b);if(pa!==pb)return pa-pb;
   var da=daysTo(a),db=daysTo(b);if(da!==db){if(da===null)return 1;if(db===null)return -1;return da-db}
+  var la=laneRank(a.lane),lb=laneRank(b.lane);if(la!==lb)return la-lb;
   return a.created_at<b.created_at?-1:a.created_at>b.created_at?1:0;
 }
 function whyText(it){
   var t=tierOf(it),rs=state.priorities.rules.filter(function(r){return r.enabled&&(r.key==='blocked'||r.key==='dated')});
   if(t<99){var r=rs[t];return r.key==='blocked'?'blocked · beats everything':'dated within '+(r.days==null?3:r.days)+' days'}
   var a=waitAge(it);if(a!==null&&a>=waitDays())return 'waiting '+waitDays()+'+ days';
-  return 'ranked by lane order';
+  return it.priority?('priority '+it.priority+' · then due date, lane order'):'ranked by lane order';
 }
 function nextDecision(){
   var f=focusLane();
@@ -1184,16 +1209,26 @@ function focusHTML(){
   return '<div class="focus"><span class="lab">Focus</span><div class="fseg"><button class="fc all'+(f?'':' on')+'" data-act="focus" data-v="all" aria-pressed="'+(!f)+'">All lanes</button>'+chips+'</div><span class="hint">'+hint+'</span></div><div class="pshapes">'+shapesLegend()+'</div>';
 }
 function footHTML(){return '<footer class="foot">'+colorLegend()+'<div style="display:flex;gap:14px;align-items:center">'+shapesLegend()+'</div></footer>'}
+function teamVisible(it){return it.visibility==='team'&&it.private!==true}
 function teamHTML(){
   return '<div class="content" style="display:block"><div class="card team">'+svg('users','i')+'<div class="kick">Team</div><h2>Team tab comes later</h2><p>Personal is live. Sharing with teammates needs sign-in and sync, which are not built yet. Nothing here is shared or sent anywhere.</p><button class="btn primary" data-act="scope" data-v="personal">Back to Personal</button></div></div>';
 }
 
 /* ---------------- Today ---------------- */
 function sec(label,note){return '<div class="sec"><span class="kick">'+label+'</span>'+(note?'<span class="note">'+note+'</span>':'')+'</div>'}
+function xtags(it){
+  var t='';
+  if(it.priority)t+='<span class="chip pri '+(it.priority==='high'?'red':'gray')+'" title="Priority">'+esc(it.priority==='med'?'Med':it.priority==='high'?'High':'Low')+'</span>';
+  if(it.private)t+='<span class="chip priv">'+svg('lock','s')+'Private</span>';
+  if(it.unverified)t+='<span class="chip unv" title="The source pages did not confirm this">unverified</span>';
+  return t;
+}
+function wline(it){return it.waiting_on?'<span class="wo">Waiting on: '+esc(it.waiting_on)+'</span>':''}
 function subLine(it,withDate){
   var parts=[];
   if(withDate&&it.due)parts.push(esc(dlabel(it.due)));
   var b=it.bot?botById(it.bot):null;if(b)parts.push(bn(b));
+  if(it.waiting_on)parts.push(wline(it));
   if(it.note)parts.push('\u0001'+botify(it.note));
   return parts.map(function(p){return p.charAt(0)==='\u0001'?'<span class="nt">'+p.slice(1)+'</span>':'<span>'+p+'</span>'}).join('');
 }
@@ -1205,7 +1240,7 @@ function pinBtn(it){
 }
 function top3Row(o,i){
   var it=o.it;
-  var tags=(o.pinned?'<span class="chip pinned">'+svg('pin','s')+'Pinned</span><span class="why">You pinned this · always sits first</span>':'<span class="chip auto">Auto</span><span class="why">'+esc(whyText(it))+'</span>')+linkChip(it);
+  var tags=(o.pinned?'<span class="chip pinned">'+svg('pin','s')+'Pinned</span><span class="why">You pinned this · always sits first</span>':'<span class="chip auto">Auto</span><span class="why">'+esc(whyText(it))+'</span>')+xtags(it)+linkChip(it);
   return '<div class="card pcard row3 '+pcls(it.lane)+'"><div class="num">'+(i+1)+'</div><div style="min-width:0"><button class="t linkish" data-act="edit" data-id="'+it.id+'">'+botify(it.title)+'</button><div class="s">'+pl(it.lane)+subLine(it,true)+'</div><div class="tags">'+tags+'</div></div><div class="rt">'+(dueChip(it)||statusChip(it))+rowActs(it)+pinBtn(it)+'</div></div>';
 }
 function heroHTML(){
@@ -1266,7 +1301,7 @@ function todayHTML(){
   var w=waitRows();
   right+=sec('Waiting too long · '+(fl?esc(fl.name)+' only':waitDays()+'+ days'));
   right+='<div class="stack">'+(w.shown.length?w.shown.map(waitRow).join(''):'<div class="empty">Nothing has been waiting '+waitDays()+'+ days.</div>')+'</div>';
-  if(w.hidden>0)right+='<button class="btn sm" data-act="go" data-view="waiting" style="align-self:flex-start">+'+w.hidden+' more in Waiting on</button>';
+  if(w.hidden>0)right+='<button class="btn sm" data-act="go" data-view="waiting" style="align-self:flex-start">'+(fl?'+'+w.hidden+' ':'')+'more in Waiting on</button>';
   return '<div class="content"><div class="col">'+left+'</div><div class="col">'+right+'</div></div>';
 }
 
@@ -1282,9 +1317,11 @@ function irow(it,opts){
   var extra=[];if(a!==null&&opts.age!==false)extra.push('<span>waiting '+a+' d · since '+esc(dshort(it.since||it.created_at.slice(0,10)))+'</span>');
   if(it.due)extra.push('<span>'+esc(dlabel(it.due))+'</span>');
   var b=it.bot?botById(it.bot):null;if(b)extra.push(bn(b));
-  if(it.note)extra.push('<span class="nt">'+botify(it.note)+'</span>');
+  if(it.waiting_on)extra.push(wline(it));
+  if(it.ref)extra.push('<span class="rf mono">'+esc(it.ref)+'</span>');
+  var nline=it.note?'<div class="nline" title="'+esc(it.note)+'">'+botify(it.note)+'</div>':'';
   var done=!isOpen(it);
-  return '<div class="card pcard irow '+pcls(it.lane)+(done?' done':'')+'"><button class="chk'+(it.status==='done'?' on':'')+'" data-act="done" data-id="'+it.id+'" aria-label="'+(done?'Reopen':'Mark done')+': '+esc(it.title)+'">'+svg('check','s')+'</button><div style="min-width:0"><button class="t linkish" data-act="edit" data-id="'+it.id+'">'+botify(it.title)+'</button><div class="s">'+(opts.lanePill?pl(it.lane):'')+extra.join('')+'</div>'+((tags.length||lk)?'<div class="tags">'+tags.join('')+lk+'</div>':'')+'</div><div class="rt">'+(dueChip(it)&&isOpen(it)?dueChip(it):'')+statusChip(it)+'<button class="iconbtn" data-act="pin" data-id="'+it.id+'" aria-pressed="'+it.pinned+'" aria-label="'+(it.pinned?'Unpin':'Pin to top 3')+'" title="'+(it.pinned?'Unpin':'Pin to top 3')+'" style="'+(it.pinned?'background:var(--pc);color:#111312;border-color:var(--pc)':'')+'">'+svg('pin','s')+'</button></div></div>';
+  return '<div class="card pcard irow '+pcls(it.lane)+(done?' done':'')+'"><button class="chk'+(it.status==='done'?' on':'')+'" data-act="done" data-id="'+it.id+'" aria-label="'+(done?'Reopen':'Mark done')+': '+esc(it.title)+'">'+svg('check','s')+'</button><div style="min-width:0"><button class="t linkish" data-act="edit" data-id="'+it.id+'">'+botify(it.title)+'</button><div class="s">'+(opts.lanePill?pl(it.lane):'')+extra.join('')+'</div>'+nline+((xtags(it)||tags.length||lk)?'<div class="tags">'+xtags(it)+tags.join('')+lk+'</div>':'')+'</div><div class="rt">'+(dueChip(it)&&isOpen(it)?dueChip(it):'')+statusChip(it)+'<button class="iconbtn" data-act="pin" data-id="'+it.id+'" aria-pressed="'+it.pinned+'" aria-label="'+(it.pinned?'Unpin':'Pin to top 3')+'" title="'+(it.pinned?'Unpin':'Pin to top 3')+'" style="'+(it.pinned?'background:var(--pc);color:#111312;border-color:var(--pc)':'')+'">'+svg('pin','s')+'</button></div></div>';
 }
 function laneHead(l,n,sub){
   return '<div class="lh '+pcls(l.id)+'">'+mark(l,'xl')+'<span class="nm">'+esc(l.name)+'</span><span class="cnt">'+n+'</span><span class="ct">'+esc(sub||'')+'</span><span class="line"></span></div>';
@@ -1295,13 +1332,18 @@ function lanesSections(filterFn,sortFn,emptyMsg,opts){
   var html='';
   ls.forEach(function(l){
     var its=laneItems(l.id,filterFn).sort(sortFn);
-    html+='<section class="group" aria-label="'+esc(l.name)+'">'+laneHead(l,its.length,l.desc)+(its.length?its.map(function(i){return irow(i,opts)}).join(''):'<div class="empty">'+emptyMsg+'</div>')+'</section>';
+    var core=its.filter(function(i){return !i.group}),gs=[];
+    its.forEach(function(i){if(i.group&&gs.indexOf(i.group)<0)gs.push(i.group)});
+    var body=core.map(function(i){return irow(i,opts)}).join('');
+    gs.forEach(function(g){var gi=its.filter(function(i){return i.group===g});
+      body+='<div class="sgh"><span class="sg-t">'+esc(g)+'</span><span class="sg-n mono">'+gi.length+' in this group</span><span class="sg-l"></span></div>'+gi.map(function(i){return irow(i,opts)}).join('')});
+    html+='<section class="group" aria-label="'+esc(l.name)+'">'+laneHead(l,its.length,l.desc)+(its.length?body:'<div class="empty">'+emptyMsg+'</div>')+'</section>';
   });
   return html;
 }
 function projectsHTML(){
   var doneN=0;state.items.forEach(function(i){if(!isOpen(i)&&inFocus(i))doneN++});
-  var tools='<div class="tools"><button class="btn primary sm" data-act="new-item">'+svg('plus','s')+'Add item</button><button class="btn sm" data-act="toggle-done" aria-pressed="'+ui.showDone+'">'+(ui.showDone?'Hide':'Show')+' done / discarded ('+doneN+')</button></div>';
+  var tools='<div class="tools"><button class="btn primary sm" data-act="new-item">'+svg('plus','s')+'Add item</button><button class="btn sm" data-act="toggle-done" aria-pressed="'+ui.showDone+'">'+(ui.showDone?'Hide':'Show')+' done / discarded'+(focusLane()?' ('+doneN+')':'')+'</button></div>';
   var body=lanesSections(function(i){return ui.showDone||isOpen(i)},function(a,b){var oa=isOpen(a)?0:1,ob=isOpen(b)?0:1;return oa-ob||cmpDue(a,b)},'Nothing open in this lane.',{lanePill:false});
   return '<div class="lwrap">'+tools+body+'</div>';
 }
@@ -1504,13 +1546,24 @@ function linkItemOpts(lane,sel,self){
   laneItems(lane,function(i){return i.id!==self}).forEach(function(i){h+='<option value="'+esc(i.id)+'"'+(i.id===sel?' selected':'')+'>'+esc(i.title.length>60?i.title.slice(0,58)+'…':i.title)+'</option>'});
   return h;
 }
+function detailBlock(it){
+  var r=[];
+  if(it.ref)r.push(['ID','<span class="mono">'+esc(it.ref)+'</span>'+(it.group?' · group: '+esc(it.group):'')]);
+  r.push(['Flags',(xtags(it)||'<span class="muted">none</span>')]);
+  if(it.waiting_on)r.push(['Waiting on','<span class="wo big">'+esc(it.waiting_on)+'</span>']);
+  if(it.note)r.push(['Note','<div class="dn">'+esc(it.note)+'</div>']);
+  if(it.source)r.push(['Source','<span class="muted">'+esc(it.source)+'</span>']);
+  if(it.private)r.push(['Visibility','<span class="muted">Private. Never shown in a Team or shared view.</span>']);
+  if(!r.length)return '';
+  return '<div class="dfacts">'+r.map(function(x){return '<div class="dr"><span class="dk">'+x[0]+'</span><div class="dv">'+x[1]+'</div></div>'}).join('')+'</div>';
+}
 function itemDialog(it,pre){
   var isNew=!it;
   var d=it||{title:'',lane:(pre&&pre.lane)||focusLane()||state.lanes[0].id,kind:(pre&&pre.kind)||'task',status:'open',due:'',bot:'',note:'',link:null,pinned:false,since:''};
   var lk=d.link||{};
   var stOpts=Object.keys(STATUS).map(function(k){return '<option value="'+k+'"'+(k===d.status?' selected':'')+'>'+STATUS[k][1]+'</option>'}).join('');
   var wait=WAITING.indexOf(d.status)>=0;
-  var h='<form data-form="item" data-id="'+(it?it.id:'')+'"><div class="kick">'+(isNew?'New item':'Edit item')+'</div><h2 id="dlgTitle" class="disp">'+(isNew?(d.kind==='decision'?'Add a decision':'Add an item'):'Item details')+'</h2><div class="fgrid">'+
+  var h='<form data-form="item" data-id="'+(it?it.id:'')+'"><div class="kick">'+(isNew?'New item':'Edit item')+'</div><h2 id="dlgTitle" class="disp">'+(isNew?(d.kind==='decision'?'Add a decision':'Add an item'):'Item details')+'</h2>'+(it?detailBlock(it):'')+'<div class="fgrid">'+
    '<label class="fl full">Title<input class="fi" name="title" value="'+esc(d.title)+'" required autofocus></label>'+
    '<label class="fl">Lane<select class="fi" name="lane" data-change="item-lane">'+laneOpts(d.lane)+'</select></label>'+
    '<label class="fl">Kind<select class="fi" name="kind"><option value="task"'+(d.kind==='task'?' selected':'')+'>Task</option><option value="decision"'+(d.kind==='decision'?' selected':'')+'>Decision</option></select></label>'+
@@ -1954,7 +2007,7 @@ var sync=(function(){
       '<label class="fl full">Fine-grained token (Contents: read and write)<input class="fi" id="syncTok" type="password" data-input="sync-token" value="" placeholder="'+(tokSet?'Token saved on this device. Paste a new one to replace it.':'github_pat_…')+'" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label></div>'+
       '<p class="hint2">Data file: <b>'+esc(path())+'</b>. The token is stored only in this browser on this device. It is not in the app code, the repo, or Export JSON.</p>'+
       '<p class="note sync-line sl-'+S.status+'" id="syncLine" role="status">'+esc(lineText())+'</p>'+
-      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save &amp; connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
+      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save & connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
   }
 
   /* ----- lifecycle ----- */
@@ -2161,7 +2214,7 @@ function init(){
   window.addEventListener('hashchange',route);
   route();
   sync.start();
-  window.CC=window.__cc={get state(){return state},adapter:adapter,render:render,top3:top3,exportJSON:exportJSON,sync:sync,importText:importText,openSend:sendDialog,today:today,ui:ui,go:go};
+  window.CC=window.__cc={get state(){return state},adapter:adapter,render:render,top3:top3,exportJSON:exportJSON,sync:sync,importText:importText,openSend:sendDialog,today:today,ui:ui,go:go,teamVisible:teamVisible};
 }
 init();
 })();
