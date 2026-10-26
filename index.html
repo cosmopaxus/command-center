@@ -3,7 +3,7 @@
 COMMAND CENTER v1 — single file (fonts embedded), no build step, no server needed.
 Open by double-clicking this file (file://), or serve it as a static site (GitHub Pages). It is self-contained.
 
-STORAGE: one adapter object (`adapter` in the script) with load() -> state|null and save(state) -> bool.
+STORAGE: one adapter object (`adapter` in the script) with load() -> state|null and save(state) -> bool. Optional GitHub sync wraps it (see "GitHub sync" section and SYNC.md): localStorage stays the offline cache.
 v1 uses localStorage key "cc.command-center.v1". To use a GitHub repo or Drive file instead, replace that one object.
 
 JSON SHAPE (what "Export JSON" writes and what the adapter stores; every row has the ROW fields):
@@ -728,6 +728,19 @@ button,.btn,[data-act]{touch-action:manipulation}
  .topbar{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 }
 @media (display-mode:standalone){body{overscroll-behavior:none}}
+/* ---- sync chip + panel ---- */
+.syncchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:3px 10px 3px 8px;font:700 11px 'Atkinson Hyperlegible',sans-serif;white-space:nowrap;cursor:pointer;line-height:1.3}
+.syncchip .scd{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.syncchip.sc-synced{color:var(--green-t);border-color:color-mix(in srgb,var(--green-t) 40%,var(--line))}.syncchip.sc-synced .scd{background:var(--green-t)}
+.syncchip.sc-saving,.syncchip.sc-syncing{color:var(--amber-t);border-color:color-mix(in srgb,var(--amber-t) 40%,var(--line))}.syncchip.sc-saving .scd,.syncchip.sc-syncing .scd{background:var(--amber-t);animation:scp 1.1s ease-in-out infinite}
+.syncchip.sc-offline{color:var(--gray-t);border-style:dashed}.syncchip.sc-offline .scd{background:transparent;border:2px solid var(--gray-t)}
+.syncchip.sc-error{color:var(--red-t);border-color:color-mix(in srgb,var(--red-t) 50%,var(--line));background:var(--red-b)}.syncchip.sc-error .scd{background:var(--red-t)}
+@keyframes scp{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.syncchip .scd{animation:none!important}}
+.sync-line{overflow-wrap:anywhere;margin:0}
+.sync-line.sl-error{color:var(--red-t)}.sync-line.sl-synced{color:var(--green-t)}
+#syncPanel .fgrid{margin-top:2px}
+@media (max-width:700px){.syncchip{font-size:11px;padding:2px 8px 2px 7px}}
 
 </style>
 <style id="laneCss"></style>
@@ -1149,6 +1162,7 @@ function topbarHTML(){
   var right='';
   if(fl)right+='<span class="lanepill '+pcls(fl.id)+'">'+mark(fl)+esc(fl.name)+' focus</span>';
   right+='<div class="seg" role="group" aria-label="Personal or Team"><button class="'+(ui.scope==='personal'?'on':'')+'" data-act="scope" data-v="personal" aria-pressed="'+(ui.scope==='personal')+'">Personal</button><button class="'+(ui.scope==='team'?'on':'')+'" data-act="scope" data-v="team" aria-pressed="'+(ui.scope==='team')+'">Team</button></div>';
+  right+=sync.chipHTML();
   if(state.meta.sample)right+='<span class="badge" title="The items, bots and notes shown are examples. Clear them in Settings.">Example<br>data</span>';
   right+='<div class="th" role="group" aria-label="Theme"><button class="'+(theme()==='light'?'on':'')+'" data-act="theme" data-v="light" aria-label="Light theme" aria-pressed="'+(theme()==='light')+'">'+svg('sun','s')+'</button><button class="'+(theme()==='dark'?'on':'')+'" data-act="theme" data-v="dark" aria-label="Dark theme" aria-pressed="'+(theme()==='dark')+'">'+svg('moon','s')+'</button></div>';
   var note='';
@@ -1451,14 +1465,15 @@ function settingsHTML(){
   var th=theme();
   var s='<div class="sgrid">';
   s+='<div class="panel"><div class="kick">Appearance</div><h3 class="disp">Theme</h3><p class="note">Dark is the default and is easier on light-sensitive eyes. Light uses soft paper, never pure white.</p><div class="seg" role="group" aria-label="Theme"><button class="'+(th==='dark'?'on':'')+'" data-act="theme" data-v="dark">'+svg('moon','s')+' Dark</button><button class="'+(th==='light'?'on':'')+'" data-act="theme" data-v="light">'+svg('sun','s')+' Light</button></div></div>';
-  s+='<div class="panel"><div class="kick">Data · stays on this device</div><h3 class="disp">Export, import, reset</h3><p class="note">Storage: <b>'+esc(adapter.name)+'</b>. '+state.items.length+' items, '+state.bots.length+' bots, '+state.outbox.length+' outbox rows, '+state.notes.length+' notes.</p><div class="btnrow"><button class="btn" data-act="export">'+svg('download','s')+'Export JSON</button><button class="btn" data-act="export-copy">'+svg('copy','s')+'Copy JSON</button><label class="btn" tabindex="0" for="importFile">'+svg('upload','s')+'Import JSON file</label><input type="file" id="importFile" accept="application/json,.json" data-change="import-file" class="sr"><button class="btn" data-act="import-paste">Paste JSON…</button></div>'+(ui.pasteOpen?'<div class="pastebox"><textarea class="fi" id="pasteJson" rows="6" placeholder="Paste exported JSON here" aria-label="Paste JSON"></textarea><div class="btnrow"><button class="btn primary" data-act="import-apply">Import pasted JSON</button><button class="btn" data-act="import-paste">Cancel</button></div></div>':'')+'<div class="btnrow sep"><button class="btn" data-act="reset">Reset to example data</button>'+(state.meta.sample?'<button class="btn danger" data-act="clear-sample">Clear example data</button>':'')+'</div><p class="note">'+(state.meta.sample?'Example data is loaded. “Clear example data” removes the example items, notes and bot snapshots and keeps your lanes, bots and settings.':'Example data is cleared. “Reset” brings the example data back.')+'</p></div>';
+  s+='<div class="panel"><div class="kick">Data · local copy on this device</div><h3 class="disp">Export, import, reset</h3><p class="note">Storage: <b>'+esc(adapter.name)+'</b>. '+state.items.length+' items, '+state.bots.length+' bots, '+state.outbox.length+' outbox rows, '+state.notes.length+' notes.</p><div class="btnrow"><button class="btn" data-act="export">'+svg('download','s')+'Export JSON</button><button class="btn" data-act="export-copy">'+svg('copy','s')+'Copy JSON</button><label class="btn" tabindex="0" for="importFile">'+svg('upload','s')+'Import JSON file</label><input type="file" id="importFile" accept="application/json,.json" data-change="import-file" class="sr"><button class="btn" data-act="import-paste">Paste JSON…</button></div>'+(ui.pasteOpen?'<div class="pastebox"><textarea class="fi" id="pasteJson" rows="6" placeholder="Paste exported JSON here" aria-label="Paste JSON"></textarea><div class="btnrow"><button class="btn primary" data-act="import-apply">Import pasted JSON</button><button class="btn" data-act="import-paste">Cancel</button></div></div>':'')+'<div class="btnrow sep"><button class="btn" data-act="reset">Reset to example data</button>'+(state.meta.sample?'<button class="btn danger" data-act="clear-sample">Clear example data</button>':'')+'</div><p class="note">'+(state.meta.sample?'Example data is loaded. “Clear example data” removes the example items, notes and bot snapshots and keeps your lanes, bots and settings.':'Example data is cleared. “Reset” brings the example data back.')+'</p></div>';
+  s+=sync.panelHTML();
   s+='</div>';
   s+='<div class="panel wide"><div class="kick">Lane marks</div><h3 class="disp">Default colored shape, or your own emoji / letter</h3>'+marksCards()+'</div>';
   s+='<div class="panel wide"><div class="kick">Lanes</div><h3 class="disp">Names and colors</h3><p class="note">Lanes are never combined. Delete is only allowed for an empty lane.</p>'+state.lanes.map(function(l){
     var empty=!state.items.some(function(i){return i.lane===l.id});
     return '<div class="lanerow '+pcls(l.id)+'">'+mark(l,'lg')+'<input class="fi" value="'+esc(l.name)+'" data-input="lane-name" data-id="'+esc(l.id)+'" aria-label="Lane name"><label class="cl">Dark<input type="color" value="'+l.color+'" data-input="lane-color" data-id="'+esc(l.id)+'" aria-label="Dark color for '+esc(l.name)+'"></label><label class="cl">Light<input type="color" value="'+l.color_light+'" data-input="lane-color-light" data-id="'+esc(l.id)+'" aria-label="Light color for '+esc(l.name)+'"></label><select class="fi" data-change="lane-shape" data-id="'+esc(l.id)+'" aria-label="Shape">'+SHAPE_NAMES.map(function(x){return '<option'+(x===l.shape?' selected':'')+'>'+x+'</option>'}).join('')+'</select><button class="iconbtn danger" data-act="lane-del" data-id="'+esc(l.id)+'" aria-label="Delete lane '+esc(l.name)+'"'+(empty?'':' disabled title="Lane has items"')+'>'+svg('trash','s')+'</button></div>';
   }).join('')+'<div class="btnrow"><button class="btn" data-act="lane-add">'+svg('plus','s')+'Add lane</button></div></div>';
-  s+='<div class="panel wide"><div class="kick">About</div><p class="note" style="margin:0">Command Center v1 · personal · '+esc(adapter.name)+' storage. Everything stays in this browser; nothing is sent over the network.</p></div>';
+  s+='<div class="panel wide"><div class="kick">About</div><p class="note" style="margin:0">Command Center v1 · personal · '+esc(adapter.name)+' storage. '+(sync.connected()?'Saved in this browser and synced to your private repo '+esc(sync.fullName())+'.':'Everything stays in this browser; nothing is sent over the network.')+'</p></div>';
   return '<div class="swrap">'+s+'</div>';
 }
 
@@ -1642,6 +1657,335 @@ function go(v,focus){
   if(location.hash===hash){route()}else location.hash=hash;
 }
 
+/* ---------------- GitHub sync (storage adapter that sits beside localStorage) ----------------
+   localStorage stays the always-on offline cache. When a fine-grained token is saved on THIS device
+   (Settings > Sync), changes are also pushed to one JSON file in a private GitHub repo through the
+   contents API (api.github.com, CORS allowed), and the file is pulled on start / focus / every minute.
+   The token lives only in localStorage key "cc.sync.v1" on this device. It is never in the code,
+   never in the exported JSON, never in the data file. */
+var localAdapter=adapter;
+var SYNC_KEY='cc.sync.v1',SYNC_BASE_KEY='cc.sync.base.v1';
+var sync=(function(){
+  var API='https://api.github.com';
+  var DEF={owner:'cosmopaxus',repo:'command-center-data',path:'data/command-center.json'};
+  var COLL=['lanes','bots','items','outbox','notes'];
+  var S={status:'local',msg:'',busy:false,again:false,timer:null,ver:0,repoOk:false,pendingRender:false,draft:{},lastTest:'',started:false};
+  var cfg=readCfg();
+  function readCfg(){try{var c=JSON.parse(localStorage.getItem(SYNC_KEY)||'null');if(c&&typeof c==='object')return c}catch(e){}return {}}
+  function writeCfg(){try{localStorage.setItem(SYNC_KEY,JSON.stringify(cfg))}catch(e){}}
+  function readBase(){try{var t=localStorage.getItem(SYNC_BASE_KEY);return t?JSON.parse(t):null}catch(e){return null}}
+  function writeBase(t){try{localStorage.setItem(SYNC_BASE_KEY,t)}catch(e){}}
+  function owner(){return cfg.owner||DEF.owner}
+  function repo(){return cfg.repo||DEF.repo}
+  function path(){return cfg.path||DEF.path}
+  function connected(){return !!cfg.token}
+  function fullName(){return owner()+'/'+repo()}
+  function cur(){return {owner:owner(),repo:repo(),path:path(),token:cfg.token}}
+
+  /* ----- helpers ----- */
+  function b64ToText(b){var bin=atob(String(b).replace(/\s/g,'')),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return new TextDecoder('utf-8').decode(u)}
+  function textToB64(t){var u=new TextEncoder().encode(t),s='';for(var i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
+  function mkErr(kind,msg){var e=new Error(msg);e.kind=kind;return e}
+  function ts(r){var t=r&&r.updated_at?Date.parse(r.updated_at):0;return isNaN(t)?0:t}
+  function eq(a,b){return JSON.stringify(a)===JSON.stringify(b)}
+  function byId(a){var m={};(a||[]).forEach(function(r){if(r&&r.id)m[r.id]=r});return m}
+  function clone(o){return JSON.parse(JSON.stringify(o))}
+
+  /* ----- GitHub REST ----- */
+  async function gh(method,url,body,accept,c){
+    var h={'Accept':accept||'application/vnd.github+json','Authorization':'Bearer '+(c||cur()).token};
+    if(body)h['Content-Type']='application/json';
+    var r;
+    try{r=await fetch(API+url,{method:method,headers:h,body:body?JSON.stringify(body):undefined,cache:'no-cache'})}
+    catch(e){throw mkErr('offline','Cannot reach GitHub. You are offline or GitHub is blocked. Changes are kept on this device and will sync when you are back online.')}
+    return r;
+  }
+  async function httpFail(r,what,c){
+    var m='';try{var j=await r.json();m=j&&j.message?String(j.message):''}catch(e){}
+    c=c||cur();var rn=c.owner+'/'+c.repo;
+    if(r.status===401)return mkErr('auth','GitHub rejected the token (bad, expired or revoked). Create a new one and paste it in Settings > Sync.');
+    if(r.status===403){
+      if(r.headers.get('x-ratelimit-remaining')==='0'||/rate limit/i.test(m))return mkErr('rate','GitHub rate limit reached. It will retry in a few minutes.');
+      return mkErr('perm','The token is not allowed to '+(what||'do that')+' on '+rn+'. It needs Contents: Read and write for this repository.');
+    }
+    if(r.status===404)return mkErr('notfound','Repository '+rn+' was not found, or the token has no access to it. Check the owner and repo name, and that the token lists this repository.');
+    if(r.status===409||r.status===422)return mkErr('conflict',m||'Conflict');
+    return mkErr('http','GitHub answered '+r.status+(m?' ('+m+')':'')+'.');
+  }
+  async function checkRepo(c){
+    c=c||cur();var fn=c.owner+'/'+c.repo;
+    var r=await gh('GET','/repos/'+encodeURIComponent(c.owner)+'/'+encodeURIComponent(c.repo),null,null,c);
+    if(!r.ok)throw await httpFail(r,'read',c);
+    var j=await r.json();
+    if(j.private===false)throw mkErr('public','Repository '+fn+' is public. Command Center only syncs to a PRIVATE repo so your data is not exposed. Nothing was sent.');
+    if(j.permissions&&j.permissions.push===false)throw mkErr('perm','The token can read '+fn+' but not write. Set Contents to Read and write on the token.');
+    if(c===undefined||!c._probe)S.repoOk=true;return j;
+  }
+  function fileUrl(c){c=c||cur();return '/repos/'+encodeURIComponent(c.owner)+'/'+encodeURIComponent(c.repo)+'/contents/'+c.path.split('/').map(encodeURIComponent).join('/')}
+  async function pull(c){
+    c=c||cur();
+    var r=await gh('GET',fileUrl(c),null,null,c);
+    if(r.status===404){if(c._probe||!S.repoOk)await checkRepo(c);return {exists:false}}
+    if(!r.ok)throw await httpFail(r,'read',c);
+    var j=await r.json(),text;
+    if(j.content&&j.encoding==='base64')text=b64ToText(j.content);
+    else{var r2=await gh('GET',fileUrl(c),null,'application/vnd.github.raw+json',c);if(!r2.ok)throw await httpFail(r2,'read',c);text=await r2.text()}
+    return {exists:true,sha:j.sha,text:text};
+  }
+  function parseRemote(text){
+    var o;
+    try{o=JSON.parse(text)}catch(e){throw mkErr('badfile','The data file '+path()+' is not valid JSON, so nothing was changed. Fix or restore the file in GitHub.')}
+    if(!o||o.format!=='command-center/v1')throw mkErr('badfile','The data file '+path()+' is not a command-center/v1 file, so nothing was changed.');
+    try{return normalize(o)}catch(e){throw mkErr('badfile','The data file '+path()+' cannot be read: '+e.message)}
+  }
+  async function push(text,sha){
+    var body={message:'Command Center sync '+nowIso().slice(0,16).replace('T',' ')+'Z',content:textToB64(text)};
+    if(sha)body.sha=sha;
+    var r=await gh('PUT',fileUrl(),body);
+    if(r.status===409||r.status===422)return {conflict:true};
+    if(!r.ok)throw await httpFail(r,'write');
+    var j=await r.json();
+    return {ok:true,sha:j&&j.content&&j.content.sha};
+  }
+
+  /* ----- merge: by item id, updated_at newest wins, deletions only when the other side knew the row (base) ----- */
+  function pick(l,r,b,st){
+    if(l&&r){
+      if(!b&&l.sample&&!r.sample)return r;           /* untouched example row loses to real remote row */
+      if(!b&&l.sample&&r.sample)return r;
+      if(eq(l,r))return r;
+      if(ts(l)>ts(r)){st.local++;return l}
+      st.remote++;return r;
+    }
+    if(l){ /* only local */
+      if(b)return ts(l)>ts(b)?l:null;                /* remote deleted it: keep only if edited here since */
+      return l.sample?null:l;                        /* never synced: drop untouched examples, keep my own rows */
+    }
+    if(r){ /* only remote */
+      if(b){return ts(r)>ts(b)?r:null}              /* I deleted it: keep only if the other side edited it since */
+      return r;
+    }
+    return null;
+  }
+  function mergeStates(L,R,B,hasBase){
+    var out=clone(R),st={local:0,remote:0};
+    COLL.forEach(function(k){
+      var lm=byId(L[k]),rm=byId(R[k]),bm=hasBase&&B?byId(B[k]):null,res=[],seen={};
+      (R[k]||[]).forEach(function(r){seen[r.id]=1;var x=pick(lm[r.id],r,bm?bm[r.id]:null,st);if(x)res.push(x)});
+      (L[k]||[]).forEach(function(l){if(seen[l.id])return;var x=pick(l,null,bm?bm[l.id]:null,st);if(x)res.push(x)});
+      out[k]=clone(res);
+    });
+    /* never leave an item pointing at a missing lane */
+    var have=byId(out.lanes);
+    out.items.forEach(function(it){if(!have[it.lane]){var src=byId(L.lanes)[it.lane]||byId(R.lanes)[it.lane]||(B?byId(B.lanes)[it.lane]:null);if(src){out.lanes.push(clone(src));have[src.id]=src}}});
+    /* top-level config: the side edited last wins; theme is a per-device choice */
+    var lm0=Date.parse(L.meta&&L.meta.updated_at)||0,rm0=Date.parse(R.meta&&R.meta.updated_at)||0;
+    var useLocal=hasBase?lm0>rm0:(!L.meta.sample&&lm0>rm0);
+    if(useLocal){out.priorities=clone(L.priorities);out.settings=clone(L.settings);out.meta=clone(L.meta);}
+    out.meta.sample=['items','notes','outbox'].some(function(k){return out[k].some(function(r){return r.sample===true})});
+    out.settings=out.settings||{};out.settings.theme=(L.settings&&L.settings.theme)||'dark';
+    out.meta.updated_at=new Date(Math.max(lm0,rm0)||Date.now()).toISOString();
+    return {state:normalize(out),stats:st};
+  }
+
+  /* ----- status ----- */
+  var LABEL={local:'Local only',synced:'Synced',saving:'Saving…',syncing:'Syncing…',offline:'Offline',error:'Sync error'};
+  function ago(t){if(!t)return 'never';var s=Math.round((Date.now()-t)/1000);if(s<10)return 'just now';if(s<90)return s+' s ago';if(s<5400)return Math.round(s/60)+' min ago';return new Date(t).toLocaleString()}
+  function setStatus(s,msg){
+    S.status=s;if(msg!==undefined)S.msg=msg;
+    $$('.syncchip').forEach(function(el){el.className='syncchip sc-'+s;el.setAttribute('title',chipTitle());el.setAttribute('aria-label','Sync status: '+LABEL[s]);var t=el.querySelector('.sct');if(t)t.textContent=LABEL[s]});
+    var l=$('#syncLine');if(l){l.className='note sync-line sl-'+s;l.textContent=lineText()}
+  }
+  function chipTitle(){
+    if(S.status==='local')return 'Stored only on this device. Open Settings > Sync to connect your private GitHub repo.';
+    if(S.status==='error')return S.msg;
+    if(S.status==='offline')return 'Offline. Saved on this device; will sync when GitHub is reachable.';
+    return fullName()+' · last synced '+ago(cfg.lastSyncAt);
+  }
+  function lineText(){
+    if(S.lastTest&&Date.now()-S.lastTestAt<15000)return S.lastTest;
+    if(S.status==='local')return 'Not connected. Everything is stored only on this device.';
+    var base=LABEL[S.status]+' · '+fullName()+' / '+path()+(cfg.lastSyncAt?' · last synced '+ago(cfg.lastSyncAt):'')+(cfg.sha?' · file '+String(cfg.sha).slice(0,7):'');
+    return (S.status==='error'||S.status==='offline')&&S.msg?LABEL[S.status]+': '+S.msg:base;
+  }
+  function chipHTML(){
+    return '<button class="syncchip sc-'+S.status+'" data-act="sync-chip" title="'+esc(chipTitle())+'" aria-label="Sync status: '+LABEL[S.status]+'"><i class="scd"></i><span class="sct">'+LABEL[S.status]+'</span></button>';
+  }
+  function safeRender(){
+    var a=document.activeElement,typing=a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+    if(typing||dlgEl){S.pendingRender=true;return}
+    S.pendingRender=false;render();
+  }
+  document.addEventListener('focusout',function(){if(!S.pendingRender)return;setTimeout(function(){var a=document.activeElement;if(S.pendingRender&&!(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))&&!dlgEl){S.pendingRender=false;render()}},60)});
+
+  /* ----- the sync cycle ----- */
+  function adopt(next){
+    var before=JSON.stringify(state);
+    state=next;ui.focus=laneById(ui.focus)?ui.focus:'all';
+    localAdapter.save(state);
+    if(before!==JSON.stringify(state))safeRender();
+  }
+  async function cycle(manual){
+    if(!S.repoOk)await checkRepo();
+    S.lastMerge='';
+    var tries=0,merged=null;
+    for(;;){
+      if(cfg.dirty&&cfg.sha&&tries===0&&!manual){
+        var v0=S.ver,t0=JSON.stringify(state,null,1),p0=await push(t0,cfg.sha);
+        if(p0.ok){cfg.sha=p0.sha;writeBase(t0);if(S.ver===v0)cfg.dirty=false;break}
+        tries++;
+      }
+      var rem=await pull();
+      if(!rem.exists){
+        var v1=S.ver,t1=JSON.stringify(state,null,1),p1=await push(t1);
+        if(p1.conflict){tries++;if(tries>4)throw mkErr('conflict','Could not save: the file keeps changing on GitHub. Try Sync now again.');continue}
+        cfg.sha=p1.sha;writeBase(t1);if(S.ver===v1)cfg.dirty=false;break;
+      }
+      if(rem.sha!==cfg.sha){
+        var R=parseRemote(rem.text),hasBase=!!(cfg.sha&&readBase()),B=hasBase?readBase():null;
+        var m=mergeStates(state,R,B,hasBase);
+        merged=m.stats;
+        var changedLocal=!eq(stripMeta(m.state),stripMeta(state)),needPush=!eq(stripMeta(m.state),stripMeta(R));
+        if(changedLocal)adopt(m.state);
+        cfg.sha=rem.sha;writeBase(rem.text);
+        if(needPush)cfg.dirty=true;
+        S.lastMerge=(m.stats.local||m.stats.remote)?('Merged: kept '+m.stats.remote+' newer remote and '+m.stats.local+' newer local change(s)'):'';
+      }
+      if(!cfg.dirty)break;
+      var v2=S.ver,t2=JSON.stringify(state,null,1),p2=await push(t2,cfg.sha);
+      if(p2.ok){cfg.sha=p2.sha;writeBase(t2);if(S.ver===v2)cfg.dirty=false;break}
+      tries++;if(tries>4)throw mkErr('conflict','Could not save: the file keeps changing on GitHub. Try Sync now again.');
+    }
+    cfg.lastSyncAt=Date.now();writeCfg();
+    return merged;
+  }
+  function stripMeta(s){var c=clone(s);if(c.meta)delete c.meta.updated_at;if(c.settings)delete c.settings.theme;return c}
+  async function run(manual){
+    if(!connected()){setStatus('local','');return}
+    if(S.busy){S.again=true;return}
+    if(typeof navigator!=='undefined'&&navigator.onLine===false){setStatus('offline','You are offline. Changes are saved on this device and will sync later.');return}
+    S.busy=true;clearTimeout(S.timer);
+    setStatus(cfg.dirty?'saving':'syncing');
+    try{
+      await cycle(manual);
+      writeCfg();
+      setStatus(cfg.dirty?'saving':'synced','');
+      if(S.lastMerge&&manual)toast(S.lastMerge);
+    }catch(e){
+      writeCfg();
+      var k=e&&e.kind;
+      if(k==='offline')setStatus('offline',e.message);
+      else if(k==='rate'){setStatus('error',e.message);scheduleRetry(300000)}
+      else setStatus('error',(e&&e.message)||'Sync failed.');
+      if(k==='offline')scheduleRetry(30000);
+    }finally{
+      S.busy=false;
+      if(S.again){S.again=false;schedule(300)}
+    }
+  }
+  function scheduleRetry(ms){clearTimeout(S.retry);S.retry=setTimeout(function(){if(connected()&&(cfg.dirty||S.status==='offline'))run()},ms)}
+  function schedule(ms){clearTimeout(S.timer);S.timer=setTimeout(function(){run()},ms==null?2000:ms)}
+  function changed(){
+    if(!connected())return;
+    cfg.dirty=true;S.ver++;writeCfg();
+    setStatus('saving');
+    schedule(2000);
+  }
+
+  /* ----- settings actions ----- */
+  function readFields(){
+    var o=($('#syncOwner')||{}).value,r=($('#syncRepo')||{}).value,t=($('#syncTok')||{}).value;
+    return {owner:(o!=null?o:S.draft.owner||owner()).trim(),repo:(r!=null?r:S.draft.repo||repo()).trim().replace(/\.git$/,''),token:(t!=null?t:S.draft.token||'').trim()};
+  }
+  function note(msg){S.lastTest=msg;S.lastTestAt=Date.now();var l=$('#syncLine');if(l)l.textContent=msg}
+  async function test(){
+    var f=readFields(),tok=f.token||cfg.token;
+    if(!tok){note('Paste a token first, then press Test connection.');return}
+    var c={owner:f.owner||DEF.owner,repo:f.repo||DEF.repo,path:path(),token:tok,_probe:true};
+    note('Testing…');
+    try{
+      await checkRepo(c);
+      var p=await pull(c),msg;
+      if(p.exists){var R=parseRemote(p.text);msg='Connected to '+c.owner+'/'+c.repo+'. Data file found: '+R.items.length+' items'+(R.meta.sample?' (example data)':'')+'. Token can read and write.'}
+      else msg='Connected to '+c.owner+'/'+c.repo+'. The data file '+c.path+' does not exist yet; it will be created when you press Save & connect.';
+      note('✓ '+msg);return {ok:true,msg:msg};
+    }catch(e){note('✗ '+e.message);return {ok:false,msg:e.message}}
+  }
+  async function saveConnect(){
+    var f=readFields();
+    if(!f.owner||!f.repo){note('Enter the repo owner and name.');return}
+    var tok=f.token||cfg.token;
+    if(!tok){note('Paste a fine-grained token first.');return}
+    var changedRepo=f.owner!==cfg.owner||f.repo!==cfg.repo||(f.token&&f.token!==cfg.token);
+    var prev=clone(cfg);
+    cfg.owner=f.owner;cfg.repo=f.repo;cfg.token=tok;cfg.path=cfg.path||DEF.path;
+    if(changedRepo){cfg.sha=null;cfg.dirty=false;try{localStorage.removeItem(SYNC_BASE_KEY)}catch(e){}S.repoOk=false}
+    S.draft={};
+    var tf=$('#syncTok');if(tf)tf.value='';
+    writeCfg();
+    note('Connecting…');setStatus('syncing');
+    await run(true);
+    if(S.status==='error'&&(S.msg&&/token|not allowed|not found|public|write/i.test(S.msg))&&!cfg.sha){
+      /* a connection that never worked: do not keep a bad token around */
+      var msg=S.msg;cfg=prev;if(!prev.token){delete cfg.token}writeCfg();setStatus(connected()?'synced':'local');note('✗ '+msg+' (not saved)');return;
+    }
+    if(S.status==='synced')note('✓ Connected. '+(S.lastMerge||'Data is in sync.'));
+    if(ui.view==='settings')safeRender();
+  }
+  function disconnect(){
+    confirmDialog('Disconnect sync?','This removes the token from this device and stops syncing. Your data stays here on this device and the repo is not touched.','Disconnect',function(){
+      closeDialog();clearTimeout(S.timer);
+      cfg={owner:cfg.owner,repo:cfg.repo,path:cfg.path};writeCfg();try{localStorage.removeItem(SYNC_BASE_KEY)}catch(e){}
+      S.repoOk=false;S.lastTest='';setStatus('local','');render();toast('Disconnected. Data stays on this device');
+    },true);
+  }
+  function chip(){
+    if(!connected()||S.status==='error'||S.status==='local'){go('settings');return}
+    run(true).then(function(){toast(S.status==='synced'?'Synced':LABEL[S.status])});
+  }
+
+  /* ----- Settings > Sync panel ----- */
+  function panelHTML(){
+    var d=S.draft,tokSet=connected();
+    return '<div class="panel wide" id="syncPanel"><div class="kick">Sync · GitHub</div><h3 class="disp">Phone, Mac and bots on one private repo</h3>'+
+      '<p class="note">Changes are saved on this device first, then pushed to one JSON file in a <b>private</b> GitHub repo. Without a token everything stays local. Step-by-step token instructions are in SYNC.md.</p>'+
+      '<div class="fgrid"><label class="fl">Repo owner<input class="fi" id="syncOwner" data-input="sync-owner" value="'+esc(d.owner!=null?d.owner:owner())+'" autocomplete="off" autocapitalize="off" spellcheck="false"></label>'+
+      '<label class="fl">Repo name<input class="fi" id="syncRepo" data-input="sync-repo" value="'+esc(d.repo!=null?d.repo:repo())+'" autocomplete="off" autocapitalize="off" spellcheck="false"></label>'+
+      '<label class="fl full">Fine-grained token (Contents: read and write)<input class="fi" id="syncTok" type="password" data-input="sync-token" value="" placeholder="'+(tokSet?'Token saved on this device. Paste a new one to replace it.':'github_pat_…')+'" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label></div>'+
+      '<p class="hint2">Data file: <b>'+esc(path())+'</b>. The token is stored only in this browser on this device. It is not in the app code, the repo, or Export JSON.</p>'+
+      '<p class="note sync-line sl-'+S.status+'" id="syncLine" role="status">'+esc(lineText())+'</p>'+
+      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save &amp; connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
+  }
+
+  /* ----- lifecycle ----- */
+  function start(){
+    if(S.started)return;S.started=true;
+    setStatus(connected()?(cfg.dirty?'saving':'syncing'):'local');
+    if(connected())run();
+    window.addEventListener('online',function(){if(connected())run()});
+    window.addEventListener('offline',function(){if(connected())setStatus('offline','You are offline. Changes are saved on this device and will sync later.')});
+    document.addEventListener('visibilitychange',function(){
+      if(!connected())return;
+      if(document.visibilityState==='visible')run();
+      else if(cfg.dirty)run();
+    });
+    window.addEventListener('pagehide',function(){if(connected()&&cfg.dirty&&!S.busy)run()});
+    setInterval(function(){if(connected()&&document.visibilityState==='visible'&&!S.busy&&S.status!=='error')run()},60000);
+  }
+  return {start:start,run:run,changed:changed,connected:connected,chipHTML:chipHTML,panelHTML:panelHTML,chip:chip,
+    test:test,saveConnect:saveConnect,disconnect:disconnect,fullName:fullName,merge:mergeStates,
+    draft:function(k,v){S.draft[k]=v},
+    get status(){return S.status},get message(){return S.msg},
+    info:function(){return {status:S.status,message:S.msg,connected:connected(),owner:owner(),repo:repo(),path:path(),sha:cfg.sha||null,dirty:!!cfg.dirty,lastSyncAt:cfg.lastSyncAt||null,hasToken:!!cfg.token}}};
+})();
+adapter={
+  get name(){return sync.connected()?'GitHub + localStorage cache':'localStorage'},
+  key:localAdapter.key,
+  load:function(){return localAdapter.load()},
+  save:function(s){var ok=localAdapter.save(s);sync.changed();return ok},
+  local:localAdapter
+};
+
 /* ---------------- actions ---------------- */
 function swap(arr,i,j){var t=arr[i];arr[i]=arr[j];arr[j]=t}
 function moveIn(arr,from,to){var x=arr.splice(from,1)[0];arr.splice(to,0,x)}
@@ -1718,6 +2062,11 @@ var ACT={
   'lane-del':function(el){var id=el.dataset.id;if(el.disabled)return;confirmDialog('Delete this lane?','The lane is empty, so nothing is lost. Bots assigned to it will show under Cross-project.','Delete lane',function(){
       if(state.lanes.length<2){toast('Keep at least one lane');closeDialog();return}
       state.lanes=state.lanes.filter(function(l){return l.id!==id});state.priorities.lane_order=state.priorities.lane_order.filter(function(x){return x!==id});if(ui.focus===id)ui.focus='all';closeDialog();commit()},true)},
+  'sync-chip':function(){sync.chip()},
+  'sync-save':function(){sync.saveConnect()},
+  'sync-test':function(){sync.test()},
+  'sync-now':function(){sync.run(true).then(function(){toast(sync.status==='synced'?'Synced':'Sync: '+sync.status)})},
+  'sync-disconnect':function(){sync.disconnect()},
   export:function(){downloadJSON()},
   'export-copy':function(){copyText(exportJSON(),function(r){toast(r===true?'JSON copied':'Select and copy the JSON')})},
   'import-paste':function(){ui.pasteOpen=!ui.pasteOpen;render()},
@@ -1764,6 +2113,9 @@ document.addEventListener('input',function(e){
   if(lv==='libq'){ui.q=el.value;render();return}
   if(!k)return;
   if(k==='send-text'){updateSend();return}
+  if(k==='sync-owner'){sync.draft('owner',el.value);return}
+  if(k==='sync-repo'){sync.draft('repo',el.value);return}
+  if(k==='sync-token'){sync.draft('token',el.value);return}
   if(k==='rule-title'){rule(el.dataset.key).title=el.value;commit(true)}
   else if(k==='rule-desc'){rule(el.dataset.key).desc=el.value;commit(true)}
   else if(k==='rule-days'){var v=Math.max(1,Math.min(60,parseInt(el.value,10)||0));if(v){rule(el.dataset.key).days=v;commit(true)}}
@@ -1808,7 +2160,8 @@ function init(){
   applyTheme();
   window.addEventListener('hashchange',route);
   route();
-  window.CC=window.__cc={get state(){return state},adapter:adapter,render:render,top3:top3,exportJSON:exportJSON,importText:importText,openSend:sendDialog,today:today,ui:ui,go:go};
+  sync.start();
+  window.CC=window.__cc={get state(){return state},adapter:adapter,render:render,top3:top3,exportJSON:exportJSON,sync:sync,importText:importText,openSend:sendDialog,today:today,ui:ui,go:go};
 }
 init();
 })();
