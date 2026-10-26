@@ -777,7 +777,7 @@ button,.btn,[data-act]{touch-action:manipulation}
 'use strict';
 /* ---------------- tiny helpers ---------------- */
 var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&amp;quot;',"'":'&#39;'}[c]})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&'+'quot;',"'":'&#39;'}[c]})}
 function uid(p){return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function p2(n){return n<10?'0'+n:''+n}
 function nowIso(){return new Date().toISOString()}
