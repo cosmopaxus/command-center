@@ -1,10 +1,11 @@
 # Command Center sync (GitHub)
 
-Command Center keeps its data in one JSON file in a **private** GitHub repo, so your phone, your Mac and your bots all see the same list.
+Command Center keeps its data in two small JSON files in a **private** GitHub repo, so your phone, your Mac and your bots all see the same list.
 
 - App (public, code only): `https://github.com/cosmopaxus/command-center`
-- Data (private): `https://github.com/cosmopaxus/command-center-data`, file `data/command-center.json`
-- Format: `command-center/v1` (same file the app's Export JSON makes)
+- Data (private): `https://github.com/cosmopaxus/command-center-data`
+  - `data/command-center.json`: lanes, bots, items, notes (format `command-center/v1`, same shape the app's Export JSON makes). Its `outbox` is always `[]`.
+  - `data/outbox.json`: the **outbox** (requests to bots), format `command-center-outbox/v1`. Small on purpose, see the read-limit note below.
 
 Nothing secret lives in the public repo. The token lives only in the browser of the device you pasted it into.
 
@@ -32,7 +33,9 @@ If a token leaks or you lose a phone: GitHub → Settings → Developer settings
 ### What the app does for you
 - Saves to the device first (works offline), then pushes to GitHub about 2 seconds after the last change.
 - Pulls when you open the app, when you come back to the tab, and every minute while it is open.
-- If your phone and a bot both changed the file, it merges **by item id**. For the same item the **newer `updated_at` wins**. Items added on either side are kept. Nothing is silently dropped. An item you deleted stays deleted unless someone edited it after.
+- Syncs each file on its own (own sha, own debounce, own offline cache). An outbox change commits only `data/outbox.json`.
+- **Migration:** if the main file still has outbox rows (older app version), the app writes them into `data/outbox.json` first and only then rewrites the main file with `outbox: []`. If the outbox write fails, the main file is left untouched, so no row is lost.
+- If your phone and a bot both changed a file, it merges **by item id**. For the same item the **newer `updated_at` wins**. Items added on either side are kept. Nothing is silently dropped. An item you deleted stays deleted unless someone edited it after.
 - Refuses to sync to a **public** repo (it checks).
 - Never mixes lanes. Each item keeps its own `lane` id (Evoke and Evolve stay separate).
 
@@ -42,8 +45,11 @@ If a token leaks or you lose a phone: GitHub → Settings → Developer settings
 
 Use the GitHub connector with the account that has access to `cosmopaxus/command-center-data`. No Supabase, no extra service.
 
+> **Read limit.** The GitHub connector truncates file reads at roughly 12 KB. `data/command-center.json` is bigger than that (tens of KB), so a bot cannot reliably read all of it through the connector. That is why requests live in their own small file. **Bots must use `data/outbox.json` for requests** and never look for them in the main file (its `outbox` is `[]`).
+> For the main file, read the directory listing / `download_url` instead of trusting a truncated read, or only edit it when you can fetch the full content. If a read looks cut off (invalid JSON, missing closing braces), stop; do not write.
+
 ### Read
-`get_file_contents` → owner `cosmopaxus`, repo `command-center-data`, path `data/command-center.json`. Keep the returned **sha**.
+`get_file_contents` → owner `cosmopaxus`, repo `command-center-data`, path `data/command-center.json` (items, bots, notes) or `data/outbox.json` (requests). Keep the returned **sha** of the file you edit.
 
 ### Write (one safe way)
 1. Read the file and note its `sha`.
@@ -93,8 +99,12 @@ Find it by `id`, change fields, set `updated_at` to now, write the file as above
 ### Add an item
 Append an object to `items[]` with a new `id`, a real `lane`, `created_at` and `updated_at` both now.
 
-### Send Cosmo a message through the outbox (Bottley relays it)
-Append a row to `outbox[]`. Bottley (or Cosmo) reads pending rows and relays them. Mark one sent by setting `status` to `sent`, `sent_at` to now, and `updated_at` to now.
+### Outbox: requests to bots (`data/outbox.json`)
+The file is exactly:
+```
+{ "format": "command-center-outbox/v1", "outbox": [ ...rows... ] }
+```
+Read `data/outbox.json`, find rows with `status: "pending"`, relay them, then mark each one sent: set `status` to `sent`, `sent_at` to now and `updated_at` to now, and write the file back with `create_or_update_file` using the sha you read (on 409/422 read again and redo). To add a row, append one. Keep rows you did not create; never delete. The merge is by `id`, newest `updated_at` wins. If the file is missing, create it with an empty `outbox`.
 ```json
 {
   "id": "ob_k3j9x2",
@@ -119,9 +129,9 @@ A bot can update its own card: `last_activity_at`, `last_note`, and `snapshot[]`
 ### Top-level shape
 ```
 { "format": "command-center/v1", "meta": {...}, "settings": {"theme": "dark"},
-  "lanes": [...], "priorities": {...}, "bots": [...], "items": [...], "outbox": [...], "notes": [...] }
+  "lanes": [...], "priorities": {...}, "bots": [...], "items": [...], "outbox": [], "notes": [...] }
 ```
-Do not rename or remove top-level keys. `meta.sample: true` marks example data; the app clears that flag when Cosmo clears the examples.
+(`outbox` stays `[]` here; the rows live in `data/outbox.json`.) Do not rename or remove top-level keys. `meta.sample: true` marks example data; the app clears that flag when Cosmo clears the examples.
 
 ---
 
@@ -131,4 +141,5 @@ The app is one static file, `index.html`. Copy it to any static host (Cloudflare
 ## 4. Honest limits
 - The token is in the browser's localStorage on that device. Anyone who can use that browser profile can use it. That is why it is scoped to one private repo with Contents only.
 - There is no live push. Other devices see changes within about a minute, or when you open the app / tap the chip.
-- GitHub API rate limit is 5,000 requests per hour per token. The app uses about 1 per minute while open.
+- GitHub API rate limit is 5,000 requests per hour per token. The app uses about 2 per minute while open (one per file).
+- An old, cached copy of the app (before the outbox file) would write outbox rows into the main file again. The new app moves them to `data/outbox.json` the next time it syncs. Refresh each device after an update.
