@@ -25,6 +25,7 @@ ROW fields (items, bots, lanes, outbox, notes):
                "due":"YYYY-MM-DD"|null, "bot":botId|null, "note", "link":{ "lane":laneId,"item_id":itemId|null,"label":null }|null,
                "pinned":false,"pinned_at":ISO|null,"since":"YYYY-MM-DD"|null,"done_at":ISO|null,"inbox":false,"sample":false } ],
   "outbox": [ { ROW, "to_bot":botId,"to_bot_name","lane":laneId|null,"text","status":"pending"|"sent","sent_at":ISO|null } ],
+     (with GitHub sync these rows live in their own file data/outbox.json = {"format":"command-center-outbox/v1","outbox":[...]}; the main file keeps "outbox": [])
   "notes":  [ { ROW, "title","url","text","lane":laneId|null,"sample":false } ]
 }
 RULES: lanes are never merged. Counts are per lane only. Cross-lane "link" is a reference chip, not a shared row.
@@ -777,7 +778,7 @@ button,.btn,[data-act]{touch-action:manipulation}
 'use strict';
 /* ---------------- tiny helpers ---------------- */
 var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&'+'quot;',"'":'&#39;'}[c]})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&'+'amp;','<':'&'+'lt;','>':'&'+'gt;','"':'&'+'quot;',"'":'&#39;'}[c]})}
 function uid(p){return p+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function p2(n){return n<10?'0'+n:''+n}
 function nowIso(){return new Date().toISOString()}
@@ -1712,16 +1713,16 @@ function go(v,focus){
 
 /* ---------------- GitHub sync (storage adapter that sits beside localStorage) ----------------
    localStorage stays the always-on offline cache. When a fine-grained token is saved on THIS device
-   (Settings > Sync), changes are also pushed to one JSON file in a private GitHub repo through the
+   (Settings > Sync), changes are also pushed to two small JSON files (data/command-center.json and data/outbox.json) in a private GitHub repo through the
    contents API (api.github.com, CORS allowed), and the file is pulled on start / focus / every minute.
    The token lives only in localStorage key "cc.sync.v1" on this device. It is never in the code,
    never in the exported JSON, never in the data file. */
 var localAdapter=adapter;
-var SYNC_KEY='cc.sync.v1',SYNC_BASE_KEY='cc.sync.base.v1';
+var SYNC_KEY='cc.sync.v1',SYNC_BASE_KEY='cc.sync.base.v1',SYNC_OBASE_KEY='cc.sync.outbox.base.v1';
 var sync=(function(){
   var API='https://api.github.com';
   var DEF={owner:'cosmopaxus',repo:'command-center-data',path:'data/command-center.json'};
-  var COLL=['lanes','bots','items','outbox','notes'];
+  var COLL=['lanes','bots','items','notes'];   /* outbox rows live in their own file (data/outbox.json), see ocycle() */
   var S={status:'local',msg:'',busy:false,again:false,timer:null,ver:0,repoOk:false,pendingRender:false,draft:{},lastTest:'',started:false};
   var cfg=readCfg();
   function readCfg(){try{var c=JSON.parse(localStorage.getItem(SYNC_KEY)||'null');if(c&&typeof c==='object')return c}catch(e){}return {}}
@@ -1731,6 +1732,8 @@ var sync=(function(){
   function owner(){return cfg.owner||DEF.owner}
   function repo(){return cfg.repo||DEF.repo}
   function path(){return cfg.path||DEF.path}
+  function opath(){return cfg.opath||(path().replace(/[^\/]*$/,'')+'outbox.json')}
+  function oc(){var c=cur();c.path=opath();return c}
   function connected(){return !!cfg.token}
   function fullName(){return owner()+'/'+repo()}
   function cur(){return {owner:owner(),repo:repo(),path:path(),token:cfg.token}}
@@ -1791,10 +1794,10 @@ var sync=(function(){
     if(!o||o.format!=='command-center/v1')throw mkErr('badfile','The data file '+path()+' is not a command-center/v1 file, so nothing was changed.');
     try{return normalize(o)}catch(e){throw mkErr('badfile','The data file '+path()+' cannot be read: '+e.message)}
   }
-  async function push(text,sha){
+  async function push(text,sha,c){
     var body={message:'Command Center sync '+nowIso().slice(0,16).replace('T',' ')+'Z',content:textToB64(text)};
     if(sha)body.sha=sha;
-    var r=await gh('PUT',fileUrl(),body);
+    var r=await gh('PUT',fileUrl(c),body,null,c);
     if(r.status===409||r.status===422)return {conflict:true};
     if(!r.ok)throw await httpFail(r,'write');
     var j=await r.json();
@@ -1820,6 +1823,34 @@ var sync=(function(){
     }
     return null;
   }
+  function unionNewest(a,b){
+    var m={},res=[];(a||[]).forEach(function(r){if(r&&r.id){m[r.id]=res.length;res.push(r)}});
+    (b||[]).forEach(function(r){if(!r||!r.id)return;if(m[r.id]==null){m[r.id]=res.length;res.push(r)}else if(ts(r)>ts(res[m[r.id]]))res[m[r.id]]=r});
+    return clone(res);
+  }
+  function mergeRows(L,R,B,hasBase){
+    var lm=byId(L),bm=hasBase&&B?byId(B):null,res=[],seen={},st={local:0,remote:0};
+    (R||[]).forEach(function(r){seen[r.id]=1;var x=pick(lm[r.id],r,bm?bm[r.id]:null,st);if(x)res.push(x)});
+    (L||[]).forEach(function(l){if(seen[l.id])return;var x=pick(l,null,bm?bm[l.id]:null,st);if(x)res.push(x)});
+    return clone(res);
+  }
+  function sameRows(a,b){
+    function k(x){return JSON.stringify((x||[]).slice().sort(function(p,q){return p.id<q.id?-1:p.id>q.id?1:0}))}
+    return k(a)===k(b);
+  }
+  function mv(s){return Object.assign({},s,{outbox:[]})}
+  function mainText(s){return JSON.stringify(mv(s),null,1)}
+  function otext(rows){return JSON.stringify({format:'command-center-outbox/v1',outbox:rows},null,1)+'\n'}
+  function parseOutbox(text){
+    var o,P=opath();
+    try{o=JSON.parse(text)}catch(e){throw mkErr('badfile','The outbox file '+P+' is not valid JSON, so nothing was changed. Fix or restore the file in GitHub.')}
+    if(!o||o.format!=='command-center-outbox/v1'||!Array.isArray(o.outbox))throw mkErr('badfile','The outbox file '+P+' is not a command-center-outbox/v1 file with an "outbox" list, so nothing was changed.');
+    var t=nowIso();
+    return o.outbox.filter(function(r){return r&&typeof r==='object'}).map(function(r){
+      if(!r.id)r.id=uid('ob');r.owner=r.owner||'cosmo';r.visibility=r.visibility==='team'?'team':'personal';
+      r.created_at=r.created_at||t;r.updated_at=r.updated_at||r.created_at;r.status=r.status==='sent'?'sent':'pending';r.text=r.text==null?'':String(r.text);
+      return r});
+  }
   function mergeStates(L,R,B,hasBase){
     var out=clone(R),st={local:0,remote:0};
     COLL.forEach(function(k){
@@ -1835,6 +1866,8 @@ var sync=(function(){
     var lm0=Date.parse(L.meta&&L.meta.updated_at)||0,rm0=Date.parse(R.meta&&R.meta.updated_at)||0;
     var useLocal=hasBase?lm0>rm0:(!L.meta.sample&&lm0>rm0);
     if(useLocal){out.priorities=clone(L.priorities);out.settings=clone(L.settings);out.meta=clone(L.meta);}
+    /* outbox: kept as this device has it; any rows still in the main file (old layout) are folded in so they can be moved to the outbox file */
+    out.outbox=unionNewest(L.outbox,R.outbox);
     out.meta.sample=['items','notes','outbox'].some(function(k){return out[k].some(function(r){return r.sample===true})});
     out.settings=out.settings||{};out.settings.theme=(L.settings&&L.settings.theme)||'dark';
     out.meta.updated_at=new Date(Math.max(lm0,rm0)||Date.now()).toISOString();
@@ -1884,13 +1917,18 @@ var sync=(function(){
     var tries=0,merged=null;
     for(;;){
       if(cfg.dirty&&cfg.sha&&tries===0&&!manual){
-        var v0=S.ver,t0=JSON.stringify(state,null,1),p0=await push(t0,cfg.sha);
-        if(p0.ok){cfg.sha=p0.sha;writeBase(t0);if(S.ver===v0)cfg.dirty=false;break}
-        tries++;
+        var v0=S.ver,t0=mainText(state),rb=readBase();
+        if(rb&&!cfg.mig&&eq(stripMeta(mv(state)),stripMeta(rb))){if(S.ver===v0)cfg.dirty=false}      /* only the outbox changed: the main file needs no commit */
+        else{
+          await guardMig();
+          var p0=await push(t0,cfg.sha);
+          if(p0.ok){cfg.sha=p0.sha;writeBase(t0);if(S.ver===v0)cfg.dirty=false;break}
+          tries++;
+        }
       }
       var rem=await pull();
       if(!rem.exists){
-        var v1=S.ver,t1=JSON.stringify(state,null,1),p1=await push(t1);
+        var v1=S.ver,t1=mainText(state),p1=await push(t1);
         if(p1.conflict){tries++;if(tries>4)throw mkErr('conflict','Could not save: the file keeps changing on GitHub. Try Sync now again.');continue}
         cfg.sha=p1.sha;writeBase(t1);if(S.ver===v1)cfg.dirty=false;break;
       }
@@ -1898,19 +1936,63 @@ var sync=(function(){
         var R=parseRemote(rem.text),hasBase=!!(cfg.sha&&readBase()),B=hasBase?readBase():null;
         var m=mergeStates(state,R,B,hasBase);
         merged=m.stats;
-        var changedLocal=!eq(stripMeta(m.state),stripMeta(state)),needPush=!eq(stripMeta(m.state),stripMeta(R));
+        var changedLocal=!eq(stripMeta(m.state),stripMeta(state)),needPush=!eq(stripMeta(mv(m.state)),stripMeta(R));
+        if(R.outbox&&R.outbox.length)cfg.mig=true;     /* old layout: requests still sit in the main file; move them to the outbox file before the main file is rewritten */
         if(changedLocal)adopt(m.state);
         cfg.sha=rem.sha;writeBase(rem.text);
         if(needPush)cfg.dirty=true;
         S.lastMerge=(m.stats.local||m.stats.remote)?('Merged: kept '+m.stats.remote+' newer remote and '+m.stats.local+' newer local change(s)'):'';
       }
       if(!cfg.dirty)break;
-      var v2=S.ver,t2=JSON.stringify(state,null,1),p2=await push(t2,cfg.sha);
+      await guardMig();
+      var v2=S.ver,t2=mainText(state),p2=await push(t2,cfg.sha);
       if(p2.ok){cfg.sha=p2.sha;writeBase(t2);if(S.ver===v2)cfg.dirty=false;break}
       tries++;if(tries>4)throw mkErr('conflict','Could not save: the file keeps changing on GitHub. Try Sync now again.');
     }
     cfg.lastSyncAt=Date.now();writeCfg();
     return merged;
+  }
+  async function guardMig(){if(cfg.mig){await ocycle(true);cfg.mig=false;writeCfg()}}
+  /* ----- the outbox file (data/outbox.json): small, so bots and the relay can read it through size-limited tools ----- */
+  function readOBaseRaw(){try{return localStorage.getItem(SYNC_OBASE_KEY)}catch(e){return null}}
+  function writeOBase(t){try{localStorage.setItem(SYNC_OBASE_KEY,t)}catch(e){}}
+  function obaseRows(){var t=readOBaseRaw();if(!t)return null;try{var o=JSON.parse(t);return Array.isArray(o.outbox)?o.outbox:null}catch(e){return null}}
+  function adoptOutbox(rows){
+    var before=JSON.stringify(state.outbox);
+    state.outbox=rows;localAdapter.save(state);
+    if(before!==JSON.stringify(rows))safeRender();
+  }
+  async function ocycle(manual){
+    if(!S.repoOk)await checkRepo();
+    var tries=0,P=opath();
+    for(;;){
+      if(tries===0&&!manual&&cfg.osha){
+        var ob=obaseRows();
+        if(ob&&!sameRows(state.outbox,ob)){
+          var t0=otext(state.outbox),p0=await push(t0,cfg.osha,oc());
+          if(p0.ok){cfg.osha=p0.sha;writeOBase(t0);break}
+          tries++;
+        }
+      }
+      var rem=await pull(oc());
+      if(!rem.exists){
+        var t1=otext(state.outbox),p1=await push(t1,null,oc());
+        if(p1.conflict){tries++;if(tries>4)throw mkErr('conflict','Could not save the outbox: the file keeps changing on GitHub. Try Sync now again.');continue}
+        cfg.osha=p1.sha;writeOBase(t1);break;
+      }
+      var Rr=parseOutbox(rem.text);
+      if(rem.sha!==cfg.osha){
+        var B=obaseRows(),hasBase=!!(cfg.osha&&B);
+        var merged=mergeRows(state.outbox,Rr,B,hasBase);
+        if(!sameRows(merged,state.outbox)||JSON.stringify(merged)!==JSON.stringify(state.outbox))adoptOutbox(merged);
+        cfg.osha=rem.sha;writeOBase(rem.text);
+      }
+      if(sameRows(state.outbox,Rr))break;
+      var t2=otext(state.outbox),p2=await push(t2,cfg.osha,oc());
+      if(p2.ok){cfg.osha=p2.sha;writeOBase(t2);break}
+      tries++;if(tries>4)throw mkErr('conflict','Could not save the outbox: the file keeps changing on GitHub. Try Sync now again.');
+    }
+    writeCfg();
   }
   function stripMeta(s){var c=clone(s);if(c.meta)delete c.meta.updated_at;if(c.settings)delete c.settings.theme;return c}
   async function run(manual){
@@ -1920,7 +2002,10 @@ var sync=(function(){
     S.busy=true;clearTimeout(S.timer);
     setStatus(cfg.dirty?'saving':'syncing');
     try{
-      await cycle(manual);
+      var err1=null;
+      try{await cycle(manual)}catch(e){err1=e}
+      try{await ocycle(manual)}catch(e){err1=err1||e}      /* each file syncs on its own; neither failure loses rows (they stay in this device's storage) */
+      if(err1)throw err1;
       writeCfg();
       setStatus(cfg.dirty?'saving':'synced','');
       if(S.lastMerge&&manual)toast(S.lastMerge);
@@ -1972,7 +2057,7 @@ var sync=(function(){
     var changedRepo=f.owner!==cfg.owner||f.repo!==cfg.repo||(f.token&&f.token!==cfg.token);
     var prev=clone(cfg);
     cfg.owner=f.owner;cfg.repo=f.repo;cfg.token=tok;cfg.path=cfg.path||DEF.path;
-    if(changedRepo){cfg.sha=null;cfg.dirty=false;try{localStorage.removeItem(SYNC_BASE_KEY)}catch(e){}S.repoOk=false}
+    if(changedRepo){cfg.sha=null;cfg.osha=null;cfg.mig=false;cfg.dirty=false;try{localStorage.removeItem(SYNC_BASE_KEY);localStorage.removeItem(SYNC_OBASE_KEY)}catch(e){}S.repoOk=false}
     S.draft={};
     var tf=$('#syncTok');if(tf)tf.value='';
     writeCfg();
@@ -1988,7 +2073,7 @@ var sync=(function(){
   function disconnect(){
     confirmDialog('Disconnect sync?','This removes the token from this device and stops syncing. Your data stays here on this device and the repo is not touched.','Disconnect',function(){
       closeDialog();clearTimeout(S.timer);
-      cfg={owner:cfg.owner,repo:cfg.repo,path:cfg.path};writeCfg();try{localStorage.removeItem(SYNC_BASE_KEY)}catch(e){}
+      cfg={owner:cfg.owner,repo:cfg.repo,path:cfg.path};writeCfg();try{localStorage.removeItem(SYNC_BASE_KEY);localStorage.removeItem(SYNC_OBASE_KEY)}catch(e){}
       S.repoOk=false;S.lastTest='';setStatus('local','');render();toast('Disconnected. Data stays on this device');
     },true);
   }
@@ -2001,13 +2086,13 @@ var sync=(function(){
   function panelHTML(){
     var d=S.draft,tokSet=connected();
     return '<div class="panel wide" id="syncPanel"><div class="kick">Sync · GitHub</div><h3 class="disp">Phone, Mac and bots on one private repo</h3>'+
-      '<p class="note">Changes are saved on this device first, then pushed to one JSON file in a <b>private</b> GitHub repo. Without a token everything stays local. Step-by-step token instructions are in SYNC.md.</p>'+
+      '<p class="note">Changes are saved on this device first, then pushed to two small JSON files (data and outbox) in a <b>private</b> GitHub repo. Without a token everything stays local. Step-by-step token instructions are in SYNC.md.</p>'+
       '<div class="fgrid"><label class="fl">Repo owner<input class="fi" id="syncOwner" data-input="sync-owner" value="'+esc(d.owner!=null?d.owner:owner())+'" autocomplete="off" autocapitalize="off" spellcheck="false"></label>'+
       '<label class="fl">Repo name<input class="fi" id="syncRepo" data-input="sync-repo" value="'+esc(d.repo!=null?d.repo:repo())+'" autocomplete="off" autocapitalize="off" spellcheck="false"></label>'+
       '<label class="fl full">Fine-grained token (Contents: read and write)<input class="fi" id="syncTok" type="password" data-input="sync-token" value="" placeholder="'+(tokSet?'Token saved on this device. Paste a new one to replace it.':'github_pat_…')+'" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label></div>'+
-      '<p class="hint2">Data file: <b>'+esc(path())+'</b>. The token is stored only in this browser on this device. It is not in the app code, the repo, or Export JSON.</p>'+
+      '<p class="hint2">Data file: <b>'+esc(path())+'</b>. Outbox file: <b>'+esc(opath())+'</b>. The token is stored only in this browser on this device. It is not in the app code, the repo, or Export JSON.</p>'+
       '<p class="note sync-line sl-'+S.status+'" id="syncLine" role="status">'+esc(lineText())+'</p>'+
-      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save &amp; connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
+      '<div class="btnrow"><button class="btn primary" data-act="sync-save">Save &#38; connect</button><button class="btn" data-act="sync-test">Test connection</button>'+(tokSet?'<button class="btn" data-act="sync-now">'+svg('arrow','s')+'Sync now</button><button class="btn danger" data-act="sync-disconnect">Disconnect</button>':'')+'</div></div>';
   }
 
   /* ----- lifecycle ----- */
@@ -2029,7 +2114,7 @@ var sync=(function(){
     test:test,saveConnect:saveConnect,disconnect:disconnect,fullName:fullName,merge:mergeStates,
     draft:function(k,v){S.draft[k]=v},
     get status(){return S.status},get message(){return S.msg},
-    info:function(){return {status:S.status,message:S.msg,connected:connected(),owner:owner(),repo:repo(),path:path(),sha:cfg.sha||null,dirty:!!cfg.dirty,lastSyncAt:cfg.lastSyncAt||null,hasToken:!!cfg.token}}};
+    info:function(){return {status:S.status,message:S.msg,connected:connected(),owner:owner(),repo:repo(),path:path(),opath:opath(),sha:cfg.sha||null,osha:cfg.osha||null,dirty:!!cfg.dirty,lastSyncAt:cfg.lastSyncAt||null,hasToken:!!cfg.token}}};
 })();
 adapter={
   get name(){return sync.connected()?'GitHub + localStorage cache':'localStorage'},
